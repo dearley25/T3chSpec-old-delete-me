@@ -1,149 +1,114 @@
-# T3ch Spec — with uploads
+# T3ch Spec
 
-A small Node.js site: a public catalog of IT guides/videos/code, plus a
-password-protected upload page so you can add new material without touching
-code.
+![Node.js](https://img.shields.io/badge/Node.js-Express-339933?logo=nodedotjs&logoColor=white)
+![Cloudflare R2](https://img.shields.io/badge/Cloudflare-R2-F38020?logo=cloudflare&logoColor=white)
+![Stripe](https://img.shields.io/badge/Stripe-Checkout-635BFF?logo=stripe&logoColor=white)
+![Render](https://img.shields.io/badge/Deployed%20on-Render-46E3B7?logo=render&logoColor=white)
 
-## Running it in VS Code
+An IT knowledge base I built and deployed: a public catalog of study guides, code and videos, with a password-protected upload page and paid content sold through Stripe. Deployed on Render with a custom domain, **t3chspec.com**.
 
-1. Install [Node.js](https://nodejs.org) (LTS version) if you don't have it.
-2. Open this folder in VS Code.
-3. Open a terminal in VS Code (`Terminal → New Terminal`) and run:
-   ```
-   npm install
-   ```
-4. Copy `.env.example` to a new file named `.env`, and change
-   `ADMIN_PASSWORD` to something only you know:
-   ```
-   cp .env.example .env
-   ```
-5. Start the server:
-   ```
-   npm start
-   ```
-6. Open `http://localhost:3000` in your browser. The catalog is at `/`,
-   uploads go through `/upload.html`.
+Current content includes CompTIA Security+ study notes (fundamentals, threat actors, controls and cryptography, network/endpoint/cloud security, incident response), a subnetting guide and a Bash log-rotation script.
 
-Every time you save a file, stop the server (`Ctrl+C` in the terminal) and
-run `npm start` again to see the change. (If you want auto-restart on save,
-run `npm install --save-dev nodemon` and use `npx nodemon server.js` instead.)
+## Features
 
-## How uploads work
+- **Catalog** of guides, code, videos and subjects, served from a JSON data file
+- **Admin uploads** without touching code, protected by a password stored in an environment variable
+- **Object storage** in Cloudflare R2 through the AWS S3 SDK, so files survive restarts and redeploys
+- **Paid content** through Stripe Checkout, with downloads unlocked only after payment is verified
+- **Video embeds** by link, so large video files never pass through the server
 
-- `data/entries.json` holds the catalog — every entry's title, summary, type,
-  and a link to its file or video.
-- Uploaded files go straight to a **Cloudflare R2 bucket**, not local disk —
-  so they survive restarts and redeploys.
-- The upload page asks for the admin password before it will publish
-  anything, checked against `ADMIN_PASSWORD` in your `.env` file. Nobody
-  without that password can add or delete entries.
-- Videos don't get uploaded as files — you paste a YouTube (or similar)
-  embed link instead, so large video files never need to touch your server.
+## Architecture
 
-## Setting up Cloudflare R2 (one-time)
+```mermaid
+flowchart LR
+    user["Browser"] --> app["Express app<br/>(Render)"]
+    admin["Admin"] -->|"upload + password"| app
+    app --> data[("entries.json<br/>catalog")]
+    app -->|free files| pub[("R2 public bucket")]
+    app -->|premium files| priv[("R2 private bucket")]
+    app <-->|Checkout session| stripe["Stripe"]
+    pub -->|public URL| user
+    priv -->|"presigned URL<br/>(10 min)"| user
+```
 
-1. Sign up at [cloudflare.com](https://cloudflare.com) if you don't have an
-   account (free tier covers this easily — 10GB storage free).
-2. In the dashboard, go to **R2 Object Storage → Create bucket**. Name it
-   something like `field-spec-uploads`.
-3. Open the bucket → **Settings → Public access** → enable the `r2.dev`
-   public URL. Copy that URL — you'll need it.
-4. Go to **R2 → Manage API Tokens → Create API Token**. Give it read/write
-   permission on your bucket. Copy the **Access Key ID** and
-   **Secret Access Key** it gives you (shown only once).
-5. Find your **Account ID** in the Cloudflare dashboard sidebar (under R2, or
-   your account home page).
-6. Fill these into your `.env` file:
-   ```
-   R2_ACCOUNT_ID=your-account-id
-   R2_ACCESS_KEY_ID=your-access-key-id
-   R2_SECRET_ACCESS_KEY=your-secret-access-key
-   R2_BUCKET_NAME=field-spec-uploads
-   R2_PUBLIC_URL=https://pub-xxxxxxxx.r2.dev
-   ```
-7. Restart the server (`npm start`). Uploads now go to R2 automatically —
-   nothing else to change.
+## Security design
 
-## Setting up Stripe (for paid content)
+- **Secrets stay out of the code.** All keys and the admin password come from environment variables. `.env` is git-ignored, and `.env.example` contains only placeholders.
+- **Premium files are never exposed.** The API strips each premium entry's storage key before sending the catalog to the browser.
+- **Downloads require verified payment.** The server retrieves the Stripe Checkout session and confirms it was paid *for that specific item* before issuing a download link.
+- **Download links expire.** Premium files are served through presigned URLs that are valid for 10 minutes.
+- **Uploads are constrained.** File names are sanitized and uploads are capped at 100 MB.
 
-1. Sign up at [stripe.com](https://stripe.com) if you don't have an account.
-2. In the dashboard, make sure you're in **Test mode** (toggle top-right)
-   while you're setting things up — no real cards get charged in test mode.
-3. Go to **Developers → API keys**, copy the **Secret key** (starts with
-   `sk_test_...`).
-4. Add it to `.env`:
-   ```
-   STRIPE_SECRET_KEY=sk_test_your_key_here
-   ```
-5. Test a purchase using Stripe's test card number `4242 4242 4242 4242`,
-   any future expiry date, any 3-digit CVC.
-6. Once you're ready to take real payments: in Stripe, toggle to **Live
-   mode**, grab the `sk_live_...` key, and swap it into your environment
-   variables (locally and on Render). That's the only change needed.
+## Tech stack
 
-Also create the **second, private R2 bucket** mentioned above (same steps as
-before, just don't enable its public dev URL) and add its name as
-`R2_PRIVATE_BUCKET_NAME` in `.env`. Paid uploads go there automatically;
-free uploads keep going to your existing public bucket.
+| Layer | Technology |
+|---|---|
+| Server | Node.js, Express, Multer |
+| Storage | Cloudflare R2 (S3-compatible) via `@aws-sdk/client-s3` |
+| Payments | Stripe Checkout |
+| Hosting | Render, custom domain via Namecheap DNS |
+| Front end | HTML, CSS, vanilla JavaScript |
 
-## Deploying it for real (Render)
+## Run locally
 
-You've got a GitHub account but no repo yet for this project — here's the
-full path from where you are:
+Requires [Node.js](https://nodejs.org) (LTS).
 
-1. **Create the repo:** go to github.com → click the **+** in the top right
-   → **New repository**. Name it something like `tayspec`. Leave it empty
-   (no README, no .gitignore) since your project already has files.
-2. **Push your code**, using the VS Code terminal inside your project
-   folder:
-   ```
-   git init
-   git add .
-   git commit -m "Initial commit"
-   git branch -M main
-   git remote add origin https://github.com/YOUR-USERNAME/tayspec.git
-   git push -u origin main
-   ```
-   VS Code may pop up a browser window asking you to sign in to GitHub —
-   that's normal, just approve it.
-3. **Create the Render service:** sign up free at
-   [render.com](https://render.com), click **New → Web Service**, connect
-   your GitHub account, and select the `tayspec` repo.
-4. Set the **Build Command** to `npm install` and the **Start Command** to
-   `npm start`.
-5. Under **Environment**, add every variable from your `.env` file
-   individually (Render doesn't read `.env` files — you re-enter them here):
-   `ADMIN_PASSWORD`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`,
-   `R2_SECRET_ACCESS_KEY`, `R2_BUCKET_NAME`, `R2_PUBLIC_URL`,
-   `R2_PRIVATE_BUCKET_NAME`, `STRIPE_SECRET_KEY`.
-6. Click **Deploy**. Render builds it and gives you a live URL like
-   `https://tayspec.onrender.com`.
-7. **Important last step:** go back into Render's Environment settings and
-   add `BASE_URL` set to that exact URL (e.g.
-   `BASE_URL=https://tayspec.onrender.com`). Without this, Stripe will try
-   to send buyers back to `localhost` after they pay. Redeploy after adding
-   it (Render does this automatically when you save environment changes).
+```bash
+npm install
+cp .env.example .env   # then fill in your own values
+npm start
+```
 
-From then on, any time you `git push` new changes, Render redeploys
-automatically.
+Open `http://localhost:3000`. The catalog is at `/` and uploads are at `/upload.html`.
 
-### Using a custom domain
+## Configuration
 
-This project is live at **t3chspec.com** (registered on Namecheap), pointed at
-the Render service instead of the default `.onrender.com` address.
+| Variable | Purpose |
+|---|---|
+| `ADMIN_PASSWORD` | Password required to upload or delete entries |
+| `PORT` | Local port (default `3000`) |
+| `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | Cloudflare R2 API credentials |
+| `R2_BUCKET_NAME`, `R2_PUBLIC_URL` | Public bucket for free files and its public URL |
+| `R2_PRIVATE_BUCKET_NAME` | Private bucket for paid files (no public access) |
+| `STRIPE_SECRET_KEY` | Stripe secret key (`sk_test_...` for testing) |
+| `BASE_URL` | Public site address, used for Stripe's return URLs |
 
-1. In Render, open the service → **Settings → Custom Domains → Add Custom
-   Domain**, enter your domain (and `www.` if you want both).
-2. Render shows the exact DNS records to add. Add them at your registrar
-   (Namecheap: **Domain List → Manage → Advanced DNS**).
-3. Once DNS propagates and Render shows the domain as verified, update
-   `BASE_URL` in Render's Environment settings to the new domain (e.g.
-   `BASE_URL=https://t3chspec.com`) and redeploy.
+<details>
+<summary><b>Setting up Cloudflare R2</b></summary>
 
-### If you'd rather stick with familiar shared hosting
+1. In the Cloudflare dashboard, go to **R2 Object Storage → Create bucket**.
+2. Open the bucket → **Settings → Public access** and enable the `r2.dev` public URL. This is `R2_PUBLIC_URL`.
+3. Create a second bucket for paid content and leave its public access **off**. This is `R2_PRIVATE_BUCKET_NAME`.
+4. Go to **R2 → Manage API Tokens → Create API Token** with read/write access to both buckets, and copy the access key ID and secret.
+5. Copy your **Account ID** from the dashboard.
 
-Traditional hosts like Hostinger are commonly recommended as GoDaddy
-alternatives, but they're built around PHP/WordPress, not Node.js apps like
-this one — you'd need a host that specifically offers Node.js hosting
-(some do, as an add-on). Render, Railway, or Fly.io are the more natural fit
-for what you've built here and all have working free tiers.
+</details>
+
+<details>
+<summary><b>Setting up Stripe</b></summary>
+
+1. In the Stripe dashboard, switch to **Test mode**.
+2. Go to **Developers → API keys** and copy the secret key into `STRIPE_SECRET_KEY`.
+3. Test a purchase with card `4242 4242 4242 4242`, any future expiry date and any CVC.
+4. When ready for real payments, swap in the `sk_live_...` key.
+
+</details>
+
+<details>
+<summary><b>Deploying to Render with a custom domain</b></summary>
+
+1. In Render, create a **Web Service** from this repository.
+2. Set the build command to `npm install` and the start command to `npm start`.
+3. Add every variable from the table above under **Environment**.
+4. Under **Settings → Custom Domains**, add the domain and create the DNS records Render shows at your registrar.
+5. Set `BASE_URL` to the final domain (for example `https://t3chspec.com`).
+
+Render redeploys automatically on every push to `main`.
+
+</details>
+
+## Roadmap
+
+- [ ] Move the catalog from `entries.json` to a database, since a server's local disk can reset on redeploy
+- [ ] Replace the shared admin password with proper user authentication and rate limiting
+- [ ] Confirm purchases with Stripe webhooks
